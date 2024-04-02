@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 )
 
@@ -103,8 +102,14 @@ func NewGoTLSConfig() *GoTLSConfig {
 	gc.PerCpuMapSize = DefaultMapSizePerCpu
 	return gc
 }
-
 func (gc *GoTLSConfig) Check() error {
+	if err := gc.Init(); err != nil {
+		return err
+	}
+	return gc.FindAddress()
+}
+
+func (gc *GoTLSConfig) Init() error {
 	var err error
 	if gc.Path == "" {
 		return ErrorGoBINNotFound
@@ -141,10 +146,10 @@ func (gc *GoTLSConfig) Check() error {
 		goElfArch = "unsupport_arch"
 	}
 
-	if goElfArch != runtime.GOARCH {
-		err = fmt.Errorf("Go Application not match, want:%s, have:%s", runtime.GOARCH, goElfArch)
-		return err
-	}
+	// if goElfArch != runtime.GOARCH {
+	// 	err = fmt.Errorf("Go Application not match, want:%s, have:%s", runtime.GOARCH, goElfArch)
+	// 	return err
+	// }
 	switch goElfArch {
 	case "amd64":
 	case "arm64":
@@ -163,18 +168,22 @@ func (gc *GoTLSConfig) Check() error {
 			break
 		}
 	}
+	return nil
+}
+func (gc *GoTLSConfig) FindAddress() error {
+	var err error
 	if gc.IsPieBuildMode {
 		gc.goSymTab, err = gc.ReadTable()
 		if err != nil {
 			return err
 		}
 		var addr uint64
-		addr, err = gc.findPieSymbolAddr(GoTlsWriteFunc)
+		addr, err = gc.FindPieSymbolAddr(GoTlsWriteFunc)
 		if err != nil {
 			return fmt.Errorf("%s symbol address error:%s", GoTlsWriteFunc, err.Error())
 		}
 		gc.GoTlsWriteAddr = addr
-		addr, err = gc.findPieSymbolAddr(GoTlsMasterSecretFunc)
+		addr, err = gc.FindPieSymbolAddr(GoTlsMasterSecretFunc)
 		if err != nil {
 			return fmt.Errorf("%s symbol address error:%s", GoTlsMasterSecretFunc, err.Error())
 		}
@@ -197,7 +206,7 @@ func (gc *GoTLSConfig) Check() error {
 // the instruction set associated with the specified symbol in an ELF program.
 // It is used for mounting uretprobe programs for Golang programs,
 // which are actually mounted via uprobe on these addresses.
-func (gc *GoTLSConfig) findRetOffsets(symbolName string) ([]int, error) {
+func (gc *GoTLSConfig) GetSymbol(symbolName string) (*elf.Symbol, error) {
 	var err error
 	var allSymbs []elf.Symbol
 
@@ -226,6 +235,14 @@ func (gc *GoTLSConfig) findRetOffsets(symbolName string) ([]int, error) {
 
 	if !found {
 		return nil, ErrorSymbolNotFound
+	}
+	return &symbol, err
+}
+
+func (gc *GoTLSConfig) findRetOffsets(symbolName string) ([]int, error) {
+	symbol, err := gc.GetSymbol(symbolName)
+	if err != nil {
+		return nil, err
 	}
 
 	section := gc.goElf.Sections[symbol.Section]
@@ -306,7 +323,7 @@ func (gc *GoTLSConfig) ReadTable() (*gosym.Table, error) {
 	// Find .gopclntab by magic number even if there is no section label
 	magic := magicNumber(gc.Buildinfo.GoVersion)
 	pclntabIndex := bytes.Index(tableData, magic)
-	//fmt.Printf("Buildinfo :%v, magic:%x, pclntabIndex:%d offset:%x , section:%v \n", gc.Buildinfo, magic, pclntabIndex, section.Offset, section)
+	// fmt.Printf("Buildinfo :%v, magic:%x, pclntabIndex:%d offset:%x , section:%v \n", gc.Buildinfo, magic, pclntabIndex, section.Offset, section)
 	if pclntabIndex < 0 {
 		return nil, fmt.Errorf("could not find magic number in %s ", gc.Path)
 	}
@@ -325,7 +342,7 @@ func (gc *GoTLSConfig) findRetOffsetsPie(lfunc string) ([]int, error) {
 	var offsets []int
 	var address uint64
 	var err error
-	address, err = gc.findPieSymbolAddr(lfunc)
+	address, err = gc.FindPieSymbolAddr(lfunc)
 	if err != nil {
 		return offsets, err
 	}
@@ -352,7 +369,7 @@ func (gc *GoTLSConfig) findRetOffsetsPie(lfunc string) ([]int, error) {
 	return offsets, errors.New("cant found gotls symbol offsets.")
 }
 
-func (gc *GoTLSConfig) findPieSymbolAddr(lfunc string) (uint64, error) {
+func (gc *GoTLSConfig) FindPieSymbolAddr(lfunc string) (uint64, error) {
 	f := gc.goSymTab.LookupFunc(lfunc)
 	if f == nil {
 		return 0, errors.New("Cant found symbol address on pie model.")
