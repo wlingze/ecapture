@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 )
 
@@ -141,10 +140,6 @@ func (gc *GoTLSConfig) Check() error {
 		goElfArch = "unsupport_arch"
 	}
 
-	if goElfArch != runtime.GOARCH {
-		err = fmt.Errorf("Go Application not match, want:%s, have:%s", runtime.GOARCH, goElfArch)
-		return err
-	}
 	switch goElfArch {
 	case "amd64":
 	case "arm64":
